@@ -12,9 +12,34 @@ from app import __version__
 
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 config_file = f"{root_dir}/config.toml"
-# Vercel and Lambda use read-only filesystems — redirect config to writable /tmp.
-# We also probe write-ability at import time to catch other read-only deployments.
-if os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME") or not os.access(root_dir, os.W_OK):
+
+
+def _is_readonly_fs(path: str) -> bool:
+    """Return True when *path* lives on a read-only mount.
+
+    os.access() is unreliable inside Vercel/Lambda containers because the
+    kernel permission bits look writable even though the mount is read-only.
+    We probe by actually attempting a write and catching the OSError.
+    """
+    probe = path + ".__write_probe__"
+    try:
+        with open(probe, "w") as _f:
+            pass
+        os.remove(probe)
+        return False
+    except OSError:
+        return True
+
+
+# Vercel sets /var/task as the deployment root (read-only).
+# Lambda / other serverless runtimes expose AWS_LAMBDA_FUNCTION_NAME.
+# As a last resort we do an actual write probe so we never crash on import.
+if (
+    os.getenv("VERCEL")
+    or os.getenv("AWS_LAMBDA_FUNCTION_NAME")
+    or root_dir.startswith("/var/task")
+    or _is_readonly_fs(root_dir)
+):
     config_file = "/tmp/config.toml"
 _CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods", "libpod", "podman")
 _DOCKER_HOST_GATEWAY_NAME = "host.docker.internal"
