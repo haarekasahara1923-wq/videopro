@@ -12,10 +12,15 @@ from app import __version__
 
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 config_file = f"{root_dir}/config.toml"
+# Vercel and Lambda use read-only filesystems — redirect config to writable /tmp.
+# We also probe write-ability at import time to catch other read-only deployments.
+if os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME") or not os.access(root_dir, os.W_OK):
+    config_file = "/tmp/config.toml"
 _CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods", "libpod", "podman")
 _DOCKER_HOST_GATEWAY_NAME = "host.docker.internal"
 _config_save_lock = threading.RLock()
 _MISSING = object()
+
 
 
 class _SynchronizedConfig(dict):
@@ -225,8 +230,18 @@ def load_config():
     if not os.path.isfile(config_file):
         example_file = f"{root_dir}/config.example.toml"
         if os.path.isfile(example_file):
-            shutil.copyfile(example_file, config_file)
-            logger.info("copy config.example.toml to config.toml")
+            try:
+                shutil.copyfile(example_file, config_file)
+                logger.info("copy config.example.toml to config.toml")
+            except OSError as _copy_err:
+                logger.warning(
+                    f"could not copy config.example.toml to {config_file}: {_copy_err}; "
+                    "falling back to /tmp/config.toml"
+                )
+                config_file = "/tmp/config.toml"
+                if not os.path.isfile(config_file):
+                    shutil.copyfile(example_file, config_file)
+                    logger.info("copy config.example.toml to /tmp/config.toml")
 
     logger.info(f"load config from file: {config_file}")
 
@@ -277,8 +292,9 @@ def save_config():
             fd, temp_path = tempfile.mkstemp(
                 prefix=".config-",
                 suffix=".toml.tmp",
-                dir=root_dir,
+                dir=os.path.dirname(config_file),
             )
+
             with os.fdopen(fd, mode="w", encoding="utf-8") as f:
                 f.write(serialized_config)
                 f.flush()
