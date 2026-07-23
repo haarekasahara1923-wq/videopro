@@ -91,12 +91,21 @@ def root_dir():
 
 def storage_dir(sub_dir: str = "", create: bool = False):
     d = os.path.join(root_dir(), "storage")
+    # Check if running in Vercel or read-only environment
+    if os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+        d = os.path.join("/tmp", "storage")
+
     if sub_dir:
         d = os.path.join(d, sub_dir)
-    if create and not os.path.exists(d):
-        os.makedirs(d)
+    if create or os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            d = os.path.join("/tmp", "storage", sub_dir) if sub_dir else os.path.join("/tmp", "storage")
+            os.makedirs(d, exist_ok=True)
 
     return d
+
 
 
 def resource_dir(sub_dir: str = ""):

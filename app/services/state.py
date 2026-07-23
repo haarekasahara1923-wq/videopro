@@ -228,17 +228,37 @@ class RedisState(BaseState):
         return value_str
 
 
+import os
+from loguru import logger
+
 # Global state
+_postgres_url = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or config.app.get("postgres_url", "")
 _enable_redis = config.app.get("enable_redis", False)
 _redis_host = config.app.get("redis_host", "localhost")
 _redis_port = config.app.get("redis_port", 6379)
 _redis_db = config.app.get("redis_db", 0)
 _redis_password = config.app.get("redis_password", None)
 
-state = (
-    RedisState(
-        host=_redis_host, port=_redis_port, db=_redis_db, password=_redis_password
+if _postgres_url:
+    try:
+        from app.services.postgres_state import PostgresState
+        state = PostgresState(_postgres_url)
+        logger.info("Initialized PostgreSQL state backend.")
+    except Exception as e:
+        logger.error(f"Failed to initialize PostgresState: {e}, falling back to Redis/Memory.")
+        state = (
+            RedisState(
+                host=_redis_host, port=_redis_port, db=_redis_db, password=_redis_password
+            )
+            if _enable_redis
+            else MemoryState()
+        )
+else:
+    state = (
+        RedisState(
+            host=_redis_host, port=_redis_port, db=_redis_db, password=_redis_password
+        )
+        if _enable_redis
+        else MemoryState()
     )
-    if _enable_redis
-    else MemoryState()
-)
+

@@ -1236,6 +1236,34 @@ def _run_pipeline(
         )
     cross_post_state = const.CROSS_POST_STATE_PENDING if should_cross_post else None
 
+    # Cloudinary auto-upload integration
+    try:
+        from app.utils import cloudinary_utils
+        if cloudinary_utils.is_cloudinary_configured():
+            logger.info(f"Uploading generated assets for task {task_id} to Cloudinary...")
+            c_videos = []
+            for vp in final_video_paths:
+                curl = cloudinary_utils.upload_to_cloudinary(vp, resource_type="video")
+                if curl:
+                    c_videos.append(curl)
+            
+            c_combined = []
+            for cvp in combined_video_paths:
+                curl = cloudinary_utils.upload_to_cloudinary(cvp, resource_type="video")
+                if curl:
+                    c_combined.append(curl)
+
+            c_audio = cloudinary_utils.upload_to_cloudinary(audio_file, resource_type="video") if audio_file else None
+
+            if c_videos:
+                final_video_paths = c_videos
+            if c_combined:
+                combined_video_paths = c_combined
+            if c_audio:
+                audio_file = c_audio
+    except Exception as c_err:
+        logger.error(f"Cloudinary upload step encountered error: {c_err}")
+
     kwargs = {
         "videos": final_video_paths,
         "combined_videos": combined_video_paths,
@@ -1254,6 +1282,7 @@ def _run_pipeline(
     sm.state.update_task(
         task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
     )
+
 
     if should_cross_post:
         scheduling_error = _schedule_cross_post(
