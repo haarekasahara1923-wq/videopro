@@ -248,38 +248,37 @@ def get_default_ollama_base_url() -> str:
 
 
 def load_config():
-    # Declare global so that module-level config_file is read (not a new local variable).
-    # Without this, any assignment to config_file inside this function would cause Python
-    # to treat ALL references in the function as local, raising UnboundLocalError.
-    global config_file
+    # Use a local variable to avoid ALL global scoping issues.
+    # The module-level config_file is already resolved correctly at import time.
+    cfg_file = config_file
 
     # fix: IsADirectoryError: [Errno 21] Is a directory: '/MoneyPrinterTurbo/config.toml'
-    if os.path.isdir(config_file):
-        shutil.rmtree(config_file)
+    if os.path.isdir(cfg_file):
+        shutil.rmtree(cfg_file)
 
-    if not os.path.isfile(config_file):
+    if not os.path.isfile(cfg_file):
         example_file = f"{root_dir}/config.example.toml"
         if os.path.isfile(example_file):
             try:
-                shutil.copyfile(example_file, config_file)
-                logger.info("copy config.example.toml to config.toml")
+                shutil.copyfile(example_file, cfg_file)
+                logger.info(f"copy config.example.toml to {cfg_file}")
             except OSError as _copy_err:
                 logger.warning(
-                    f"could not copy config.example.toml to {config_file}: {_copy_err}; "
+                    f"could not copy config.example.toml to {cfg_file}: {_copy_err}; "
                     "falling back to /tmp/config.toml"
                 )
-                config_file = "/tmp/config.toml"
-                if not os.path.isfile(config_file):
-                    shutil.copyfile(example_file, config_file)
+                cfg_file = "/tmp/config.toml"
+                if not os.path.isfile(cfg_file):
+                    shutil.copyfile(example_file, cfg_file)
                     logger.info("copy config.example.toml to /tmp/config.toml")
 
-    logger.info(f"load config from file: {config_file}")
+    logger.info(f"load config from file: {cfg_file}")
 
     try:
-        _config_ = toml.load(config_file)
+        _config_ = toml.load(cfg_file)
     except Exception as e:
         logger.warning(f"load config failed: {str(e)}, try to load as utf-8-sig")
-        with open(config_file, mode="r", encoding="utf-8-sig") as fp:
+        with open(cfg_file, mode="r", encoding="utf-8-sig") as fp:
             _cfg_content = fp.read()
             _config_ = toml.loads(_cfg_content)
     return _config_
