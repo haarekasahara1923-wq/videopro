@@ -17,7 +17,9 @@ socksio==1.0.0
 pydub==0.25.1
 audioop-lts==0.2.2; python_version >= "3.13"
 litellm==1.86.2
+toml>=0.10.2
 cloudinary>=1.40.0
+
 psycopg2-binary>=2.9.9
 pg8000>=1.31.2
 sqlalchemy>=2.0.35
