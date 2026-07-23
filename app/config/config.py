@@ -248,6 +248,11 @@ def get_default_ollama_base_url() -> str:
 
 
 def load_config():
+    # Declare global so that module-level config_file is read (not a new local variable).
+    # Without this, any assignment to config_file inside this function would cause Python
+    # to treat ALL references in the function as local, raising UnboundLocalError.
+    global config_file
+
     # fix: IsADirectoryError: [Errno 21] Is a directory: '/MoneyPrinterTurbo/config.toml'
     if os.path.isdir(config_file):
         shutil.rmtree(config_file)
