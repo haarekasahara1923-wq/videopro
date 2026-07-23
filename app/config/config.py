@@ -11,41 +11,46 @@ from loguru import logger
 from app import __version__
 
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-config_file = f"{root_dir}/config.toml"
 
-
-def _is_readonly_fs(path: str) -> bool:
-    """Return True when *path* lives on a read-only mount.
-
-    os.access() is unreliable inside Vercel/Lambda containers because the
-    kernel permission bits look writable even though the mount is read-only.
-    We probe by actually attempting a write and catching the OSError.
-    """
-    probe = path + ".__write_probe__"
-    try:
-        with open(probe, "w") as _f:
-            pass
-        os.remove(probe)
-        return False
-    except OSError:
-        return True
-
-
-# Vercel sets /var/task as the deployment root (read-only).
-# Lambda / other serverless runtimes expose AWS_LAMBDA_FUNCTION_NAME.
-# As a last resort we do an actual write probe so we never crash on import.
-if (
-    os.getenv("VERCEL")
-    or os.getenv("AWS_LAMBDA_FUNCTION_NAME")
-    or root_dir.startswith("/var/task")
-    or _is_readonly_fs(root_dir)
-):
-    config_file = "/tmp/config.toml"
 _CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods", "libpod", "podman")
 _DOCKER_HOST_GATEWAY_NAME = "host.docker.internal"
 _config_save_lock = threading.RLock()
 _MISSING = object()
 
+
+def _resolve_config_file() -> str:
+    """
+    Determine the correct config file path for this environment.
+
+    On Vercel and other read-only serverless platforms, /var/task is read-only,
+    so we must store config in /tmp instead.  This function is the *single source
+    of truth* for that decision and is called both at module level and inside
+    load_config(), avoiding any global-variable scoping issues entirely.
+    """
+    _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
+    # 1. Explicit env-var flags set by Vercel / AWS Lambda
+    if os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+        return "/tmp/config.toml"
+
+    # 2. Vercel always deploys to /var/task (read-only mount)
+    if _root.startswith("/var/task"):
+        return "/tmp/config.toml"
+
+    # 3. Actual write-probe — catches any other read-only deployment environment
+    probe = os.path.join(_root, ".__write_probe__")
+    try:
+        with open(probe, "w") as _f:
+            pass
+        os.remove(probe)
+    except OSError:
+        return "/tmp/config.toml"
+
+    return os.path.join(_root, "config.toml")
+
+
+# Module-level path — used by save_config() and external callers
+config_file = _resolve_config_file()
 
 
 class _SynchronizedConfig(dict):
@@ -74,7 +79,7 @@ class _SynchronizedConfig(dict):
 
     def pop(self, key, default=_MISSING):
         # ``pop(key, default)`` 在 key 不存在时同样不会改变配置。WebUI 使用
-        # 这种写法表达“采用默认策略”，刷新时必须允许它直接完成。
+        # 这种写法表达"采用默认策略"，刷新时必须允许它直接完成。
         if key not in self:
             if default is _MISSING:
                 raise KeyError(key)
@@ -223,8 +228,8 @@ def get_default_ollama_base_url() -> str:
     """
     返回 Ollama 的默认 OpenAI-compatible base_url。
 
-    用户显式配置 `ollama_base_url` 时不会走这里；这里只处理“未配置时的
-    最佳默认值”。容器内默认指向宿主机，普通本机运行默认指向 localhost。
+    用户显式配置 `ollama_base_url` 时不会走这里；这里只处理"未配置时的
+    最佳默认值"。容器内默认指向宿主机，普通本机运行默认指向 localhost。
     """
     if not is_running_in_container():
         return "http://localhost:11434/v1"
@@ -248,16 +253,20 @@ def get_default_ollama_base_url() -> str:
 
 
 def load_config():
-    # Use a local variable to avoid ALL global scoping issues.
-    # The module-level config_file is already resolved correctly at import time.
-    cfg_file = config_file
+    # -----------------------------------------------------------------------
+    # IMPORTANT: Do NOT use the module-level `config_file` variable here.
+    # We call _resolve_config_file() independently so that:
+    #   (a) there are zero global-variable references inside this function, and
+    #   (b) there is no risk of an UnboundLocalError from Python's scoping rules.
+    # -----------------------------------------------------------------------
+    cfg_file = _resolve_config_file()
 
     # fix: IsADirectoryError: [Errno 21] Is a directory: '/MoneyPrinterTurbo/config.toml'
     if os.path.isdir(cfg_file):
         shutil.rmtree(cfg_file)
 
     if not os.path.isfile(cfg_file):
-        example_file = f"{root_dir}/config.example.toml"
+        example_file = os.path.join(root_dir, "config.example.toml")
         if os.path.isfile(example_file):
             try:
                 shutil.copyfile(example_file, cfg_file)
